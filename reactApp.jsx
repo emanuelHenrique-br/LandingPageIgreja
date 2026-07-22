@@ -50,9 +50,382 @@ const whatsappUrl = (message) => {
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`
 }
 
+function useMotionSystem() {
+  const [reducedMotion, setReducedMotion] = useState(() => (
+    typeof window !== 'undefined'
+      && !document.documentElement.classList.contains('motion-forced')
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ))
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const isMotionForced = () => document.documentElement.classList.contains('motion-forced')
+    const onPreferenceChange = (event) => setReducedMotion(event.matches && !isMotionForced())
+
+    setReducedMotion(mediaQuery.matches && !isMotionForced())
+    if (mediaQuery.addEventListener) mediaQuery.addEventListener('change', onPreferenceChange)
+    else mediaQuery.addListener?.(onPreferenceChange)
+
+    return () => {
+      if (mediaQuery.removeEventListener) mediaQuery.removeEventListener('change', onPreferenceChange)
+      else mediaQuery.removeListener?.(onPreferenceChange)
+    }
+  }, [])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const hero = document.querySelector('.hero')
+    const parallaxItems = [...document.querySelectorAll('[data-parallax]')]
+
+    if (reducedMotion) {
+      root.classList.remove('motion-ready', 'motion-settled')
+      return () => {
+        root.classList.remove('motion-ready', 'motion-settled')
+      }
+    }
+
+    let introSettledTimer = 0
+    const readyFrame = window.requestAnimationFrame(() => {
+      root.classList.add('motion-ready')
+      introSettledTimer = window.setTimeout(() => root.classList.add('motion-settled'), 1650)
+    })
+
+    const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value))
+    let scrollFrame = 0
+
+    const updateScrollProgress = () => {
+      scrollFrame = 0
+      const scrollRange = Math.max(document.documentElement.scrollHeight - window.innerHeight, 1)
+      root.style.setProperty('--scroll-progress', String(clamp(window.scrollY / scrollRange)))
+
+      if (hero) {
+        const heroBounds = hero.getBoundingClientRect()
+        const heroProgress = clamp(-heroBounds.top / Math.max(heroBounds.height, 1))
+        hero.style.setProperty('--hero-scroll', String(heroProgress))
+      }
+
+      const parallaxEnabled = window.innerWidth > 860
+      const viewportCenter = window.innerHeight / 2
+      parallaxItems.forEach((item) => {
+        if (!parallaxEnabled) {
+          item.style.setProperty('--parallax-y', '0px')
+          return
+        }
+
+        const bounds = item.getBoundingClientRect()
+        const itemCenter = bounds.top + bounds.height / 2
+        const relativeCenter = clamp(
+          (itemCenter - viewportCenter) / Math.max(viewportCenter, 1),
+          -1,
+          1,
+        )
+        const strength = Number.parseFloat(item.dataset.parallax) || 0
+        item.style.setProperty('--parallax-y', `${(-relativeCenter * strength).toFixed(2)}px`)
+      })
+    }
+
+    const requestScrollUpdate = () => {
+      if (!scrollFrame) scrollFrame = window.requestAnimationFrame(updateScrollProgress)
+    }
+
+    requestScrollUpdate()
+    window.addEventListener('scroll', requestScrollUpdate, { passive: true })
+    window.addEventListener('resize', requestScrollUpdate, { passive: true })
+
+    const finePointer = window.matchMedia('(pointer: fine)').matches
+    let resetHeroPointer = null
+    let onHeroPointerMove = null
+
+    if (hero && finePointer) {
+      resetHeroPointer = () => {
+        hero.style.setProperty('--pointer-x', '0')
+        hero.style.setProperty('--pointer-y', '0')
+      }
+      onHeroPointerMove = (event) => {
+        const bounds = hero.getBoundingClientRect()
+        const pointerX = clamp(((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * 2 - 1, -1, 1)
+        const pointerY = clamp(((event.clientY - bounds.top) / Math.max(bounds.height, 1)) * 2 - 1, -1, 1)
+        hero.style.setProperty('--pointer-x', pointerX.toFixed(3))
+        hero.style.setProperty('--pointer-y', pointerY.toFixed(3))
+      }
+      hero.addEventListener('pointermove', onHeroPointerMove, { passive: true })
+      hero.addEventListener('pointerleave', resetHeroPointer)
+      hero.addEventListener('pointercancel', resetHeroPointer)
+    }
+
+    const magneticCleanups = []
+    if (finePointer) {
+      const magneticItems = [...new Set(document.querySelectorAll('.button, .nav-cta, .chatbot-toggle'))]
+      magneticItems.forEach((item) => {
+        const resetMagnetic = () => {
+          item.style.setProperty('--magnetic-x', '0px')
+          item.style.setProperty('--magnetic-y', '0px')
+          item.classList.remove('is-magnetic')
+        }
+        const onMagneticMove = (event) => {
+          const bounds = item.getBoundingClientRect()
+          const relativeX = clamp((event.clientX - bounds.left) / Math.max(bounds.width, 1), 0, 1) - 0.5
+          const relativeY = clamp((event.clientY - bounds.top) / Math.max(bounds.height, 1), 0, 1) - 0.5
+          item.style.setProperty('--magnetic-x', `${(relativeX * 16).toFixed(2)}px`)
+          item.style.setProperty('--magnetic-y', `${(relativeY * 12).toFixed(2)}px`)
+          item.classList.add('is-magnetic')
+        }
+
+        item.addEventListener('pointermove', onMagneticMove, { passive: true })
+        item.addEventListener('pointerleave', resetMagnetic)
+        item.addEventListener('pointercancel', resetMagnetic)
+        magneticCleanups.push(() => {
+          item.removeEventListener('pointermove', onMagneticMove)
+          item.removeEventListener('pointerleave', resetMagnetic)
+          item.removeEventListener('pointercancel', resetMagnetic)
+          item.classList.remove('is-magnetic')
+          item.style.removeProperty('--magnetic-x')
+          item.style.removeProperty('--magnetic-y')
+        })
+      })
+    }
+
+    const tiltCleanups = []
+    if (finePointer) {
+      document.querySelectorAll('[data-tilt]').forEach((item) => {
+        const resetTilt = () => {
+          item.style.setProperty('--tilt-x', '0deg')
+          item.style.setProperty('--tilt-y', '0deg')
+          item.style.setProperty('--glow-x', '50%')
+          item.style.setProperty('--glow-y', '50%')
+          item.classList.remove('is-tilting')
+        }
+        const onTilt = (event) => {
+          const bounds = item.getBoundingClientRect()
+          const relativeX = clamp((event.clientX - bounds.left) / Math.max(bounds.width, 1))
+          const relativeY = clamp((event.clientY - bounds.top) / Math.max(bounds.height, 1))
+          item.style.setProperty('--tilt-x', `${((0.5 - relativeY) * 12).toFixed(2)}deg`)
+          item.style.setProperty('--tilt-y', `${((relativeX - 0.5) * 12).toFixed(2)}deg`)
+          item.style.setProperty('--glow-x', `${(relativeX * 100).toFixed(1)}%`)
+          item.style.setProperty('--glow-y', `${(relativeY * 100).toFixed(1)}%`)
+          item.classList.add('is-tilting')
+        }
+
+        item.addEventListener('pointermove', onTilt, { passive: true })
+        item.addEventListener('pointerleave', resetTilt)
+        item.addEventListener('pointercancel', resetTilt)
+        tiltCleanups.push(() => {
+          item.removeEventListener('pointermove', onTilt)
+          item.removeEventListener('pointerleave', resetTilt)
+          item.removeEventListener('pointercancel', resetTilt)
+          item.classList.remove('is-tilting')
+          item.style.removeProperty('--tilt-x')
+          item.style.removeProperty('--tilt-y')
+          item.style.removeProperty('--glow-x')
+          item.style.removeProperty('--glow-y')
+        })
+      })
+    }
+
+    const pressTimers = new Map()
+    const clearPressed = (item) => {
+      const timer = pressTimers.get(item)
+      if (timer) window.clearTimeout(timer)
+      pressTimers.delete(item)
+      item.classList.remove('is-pressed')
+    }
+    const onPress = (event) => {
+      if (event.button !== 0 || !(event.target instanceof Element)) return
+      const item = event.target.closest('[data-press]')
+      if (!(item instanceof HTMLElement)) return
+
+      const bounds = item.getBoundingClientRect()
+      const pressX = clamp((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * 100
+      const pressY = clamp((event.clientY - bounds.top) / Math.max(bounds.height, 1)) * 100
+      item.style.setProperty('--press-x', `${pressX.toFixed(1)}%`)
+      item.style.setProperty('--press-y', `${pressY.toFixed(1)}%`)
+      clearPressed(item)
+      void item.offsetWidth
+      item.classList.add('is-pressed')
+      pressTimers.set(item, window.setTimeout(() => clearPressed(item), 520))
+    }
+    const onPressAnimationEnd = (event) => {
+      if (!(event.target instanceof HTMLElement) || !event.target.matches('[data-press].is-pressed')) return
+      clearPressed(event.target)
+    }
+
+    document.addEventListener('pointerdown', onPress, { passive: true })
+    document.addEventListener('animationend', onPressAnimationEnd)
+
+    const motionFlare = document.querySelector('.motion-flare')
+    let navigationTarget = null
+    let navigationFallbackTimer = 0
+    let navigationStartedAt = 0
+    let navigationStartScrollY = 0
+    let navigationMovementTimer = 0
+    let flareTimer = 0
+    let arrivalTimer = 0
+    let onNavigationScrollEnd = null
+
+    const clearNavigationScrollEnd = () => {
+      if (!onNavigationScrollEnd) return
+      window.removeEventListener('scrollend', onNavigationScrollEnd)
+      onNavigationScrollEnd = null
+    }
+
+    const finishNavigation = (target) => {
+      if (target !== navigationTarget) return
+
+      const remainingCameraTime = 420 - (performance.now() - navigationStartedAt)
+      if (remainingCameraTime > 0) {
+        if (navigationFallbackTimer) window.clearTimeout(navigationFallbackTimer)
+        navigationFallbackTimer = window.setTimeout(() => finishNavigation(target), remainingCameraTime)
+        clearNavigationScrollEnd()
+        return
+      }
+
+      if (navigationFallbackTimer) window.clearTimeout(navigationFallbackTimer)
+      navigationFallbackTimer = 0
+      if (navigationMovementTimer) window.clearTimeout(navigationMovementTimer)
+      navigationMovementTimer = 0
+      clearNavigationScrollEnd()
+      root.classList.remove('is-navigating')
+
+      target.classList.remove('motion-arrival')
+      void target.offsetWidth
+      target.classList.add('motion-arrival')
+      if (arrivalTimer) window.clearTimeout(arrivalTimer)
+      arrivalTimer = window.setTimeout(() => {
+        target.classList.remove('motion-arrival')
+        if (navigationTarget === target) navigationTarget = null
+        arrivalTimer = 0
+      }, 900)
+    }
+
+    const onInternalNavigation = (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      if (!(event.target instanceof Element)) return
+      const anchor = event.target.closest('a[href^="#"]')
+      if (!(anchor instanceof HTMLAnchorElement)) return
+
+      const hash = anchor.getAttribute('href')
+      if (!hash || hash === '#') return
+      let targetId
+      try {
+        targetId = decodeURIComponent(hash.slice(1))
+      } catch {
+        targetId = hash.slice(1)
+      }
+      const target = document.getElementById(targetId)
+      if (!target) return
+
+      const bounds = anchor.getBoundingClientRect()
+      const navX = event.clientX || bounds.left + bounds.width / 2
+      const navY = event.clientY || bounds.top + bounds.height / 2
+      root.style.setProperty('--nav-x', `${navX.toFixed(1)}px`)
+      root.style.setProperty('--nav-y', `${navY.toFixed(1)}px`)
+
+      navigationTarget?.classList.remove('motion-arrival')
+      if (arrivalTimer) window.clearTimeout(arrivalTimer)
+      arrivalTimer = 0
+      if (navigationFallbackTimer) window.clearTimeout(navigationFallbackTimer)
+      clearNavigationScrollEnd()
+      if (navigationMovementTimer) window.clearTimeout(navigationMovementTimer)
+      if (flareTimer) window.clearTimeout(flareTimer)
+
+      navigationTarget = target
+      navigationStartedAt = performance.now()
+      navigationStartScrollY = window.scrollY
+      root.classList.add('is-navigating')
+      if (motionFlare) {
+        motionFlare.classList.remove('is-active')
+        void motionFlare.offsetWidth
+        motionFlare.classList.add('is-active')
+        flareTimer = window.setTimeout(() => {
+          motionFlare.classList.remove('is-active')
+          flareTimer = 0
+        }, 800)
+      }
+
+      onNavigationScrollEnd = () => finishNavigation(target)
+      window.addEventListener('scrollend', onNavigationScrollEnd, { once: true })
+      navigationFallbackTimer = window.setTimeout(() => finishNavigation(target), 1400)
+      navigationMovementTimer = window.setTimeout(() => {
+        navigationMovementTimer = 0
+        if (target === navigationTarget && Math.abs(window.scrollY - navigationStartScrollY) < 2) {
+          finishNavigation(target)
+        }
+      }, 120)
+    }
+
+    document.addEventListener('click', onInternalNavigation)
+
+    const sections = [...document.querySelectorAll('main section[id]')]
+    const navigationLinks = [...document.querySelectorAll('.nav-panel a[href^="#"]')]
+    const visibleSections = new Map()
+    const setCurrentSection = (sectionId) => {
+      navigationLinks.forEach((link) => {
+        if (link.getAttribute('href') === `#${sectionId}`) link.setAttribute('aria-current', 'location')
+        else link.removeAttribute('aria-current')
+      })
+    }
+    const sectionObserver = 'IntersectionObserver' in window
+      ? new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) visibleSections.set(entry.target.id, entry.intersectionRatio)
+            else visibleSections.delete(entry.target.id)
+          })
+          const currentSection = [...visibleSections.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+          if (currentSection) setCurrentSection(currentSection)
+        }, { rootMargin: '-28% 0px -62% 0px', threshold: [0, 0.25, 0.5, 0.75, 1] })
+      : null
+
+    sections.forEach((section) => sectionObserver?.observe(section))
+
+    return () => {
+      window.cancelAnimationFrame(readyFrame)
+      if (scrollFrame) window.cancelAnimationFrame(scrollFrame)
+      window.removeEventListener('scroll', requestScrollUpdate)
+      window.removeEventListener('resize', requestScrollUpdate)
+      document.removeEventListener('pointerdown', onPress)
+      document.removeEventListener('animationend', onPressAnimationEnd)
+      document.removeEventListener('click', onInternalNavigation)
+      clearNavigationScrollEnd()
+      sectionObserver?.disconnect()
+      if (navigationFallbackTimer) window.clearTimeout(navigationFallbackTimer)
+      if (navigationMovementTimer) window.clearTimeout(navigationMovementTimer)
+      if (flareTimer) window.clearTimeout(flareTimer)
+      if (arrivalTimer) window.clearTimeout(arrivalTimer)
+      pressTimers.forEach((timer) => window.clearTimeout(timer))
+      document.querySelectorAll('[data-press]').forEach((item) => {
+        item.classList.remove('is-pressed')
+        item.style.removeProperty('--press-x')
+        item.style.removeProperty('--press-y')
+      })
+      navigationLinks.forEach((link) => link.removeAttribute('aria-current'))
+      navigationTarget?.classList.remove('motion-arrival')
+      root.classList.remove('is-navigating')
+      root.style.removeProperty('--nav-x')
+      root.style.removeProperty('--nav-y')
+      motionFlare?.classList.remove('is-active')
+      magneticCleanups.forEach((cleanup) => cleanup())
+      tiltCleanups.forEach((cleanup) => cleanup())
+      if (hero && onHeroPointerMove && resetHeroPointer) {
+        hero.removeEventListener('pointermove', onHeroPointerMove)
+        hero.removeEventListener('pointerleave', resetHeroPointer)
+        hero.removeEventListener('pointercancel', resetHeroPointer)
+      }
+      hero?.style.removeProperty('--hero-scroll')
+      hero?.style.removeProperty('--pointer-x')
+      hero?.style.removeProperty('--pointer-y')
+      parallaxItems.forEach((item) => item.style.removeProperty('--parallax-y'))
+      root.style.removeProperty('--scroll-progress')
+      if (introSettledTimer) window.clearTimeout(introSettledTimer)
+      root.classList.remove('motion-ready', 'motion-settled')
+    }
+  }, [reducedMotion])
+
+  return reducedMotion
+}
+
 function Brand({ light = false }) {
   return (
-    <a className={`brand${light ? ' brand-light' : ''}`} href="#inicio" aria-label={`${church.name} — início`}>
+    <a className={`brand${light ? ' brand-light' : ''}`} href="#inicio" aria-label={`${church.name} — início`} data-press>
       <span className="brand-mark" aria-hidden="true">
         <span /><span /><span /><span />
       </span>
@@ -72,6 +445,7 @@ function ContactLink({ children, className = '', message, ...props }) {
       href={url || '#contato'}
       target={url ? '_blank' : undefined}
       rel={url ? 'noreferrer' : undefined}
+      data-press
       {...props}
     >
       {children}
@@ -113,15 +487,16 @@ function Header() {
           aria-expanded={open}
           aria-label={open ? 'Fechar menu' : 'Abrir menu'}
           onClick={() => setOpen((current) => !current)}
+          data-press
         >
           {open ? <X /> : <Menu />}
         </button>
         <nav className={`nav-panel${open ? ' is-open' : ''}`} id="navLinks" aria-label="Navegação principal">
-          <a href="#inicio" onClick={closeMenu}>Início</a>
-          <a href="#cultos" onClick={closeMenu}>Encontros</a>
-          <a href="#sobre" onClick={closeMenu}>Quem somos</a>
-          <a href="#ministerios" onClick={closeMenu}>Ministérios</a>
-          <a href="#contato" onClick={closeMenu}>Contato</a>
+          <a href="#inicio" onClick={closeMenu} data-press>Início</a>
+          <a href="#cultos" onClick={closeMenu} data-press>Encontros</a>
+          <a href="#sobre" onClick={closeMenu} data-press>Quem somos</a>
+          <a href="#ministerios" onClick={closeMenu} data-press>Ministérios</a>
+          <a href="#contato" onClick={closeMenu} data-press>Contato</a>
           <ContactLink className="nav-cta" message="Olá! Quero planejar minha primeira visita à igreja." onClick={closeMenu}>
             Planeje sua visita <ArrowRight />
           </ContactLink>
@@ -140,20 +515,24 @@ function Hero() {
       <div className="container hero-layout">
         <div className="hero-copy">
           <p className="eyebrow eyebrow-light"><span /> Igreja Quadrangular em São Paulo</p>
-          <h1 id="hero-title">Um lugar para <em>pertencer.</em><br />Uma fé para viver.</h1>
+          <h1 className="hero-title" id="hero-title">
+            <span className="hero-title-line"><span>Um lugar para</span></span>{' '}
+            <span className="hero-title-line"><em>pertencer.</em></span>{' '}
+            <span className="hero-title-line"><span>Uma fé para viver.</span></span>
+          </h1>
           <p className="hero-lead">Aqui você encontra uma comunidade que acolhe, caminha junto e acredita que a presença de Deus transforma histórias.</p>
           <div className="hero-actions">
             <ContactLink className="button button-primary" message="Olá! Quero planejar minha primeira visita à igreja.">
               Planejar minha visita <ArrowRight />
             </ContactLink>
-            <a className="button button-ghost" href="#cultos">Ver horários <Clock3 /></a>
+            <a className="button button-ghost" href="#cultos" data-press>Ver horários <Clock3 /></a>
           </div>
           <ul className="hero-trust" aria-label="Informações rápidas">
             <li><Heart /> Todos são bem-vindos</li>
             <li><MapPin /> {church.city}, {church.state}</li>
           </ul>
         </div>
-        <aside className="next-card" aria-label="Próximo encontro">
+        <aside className="next-card" aria-label="Próximo encontro" data-tilt data-parallax="18">
           <div className="next-card-top"><span className="live-dot" /> Próximo encontro</div>
           <p className="next-day">Domingo</p>
           <h2>Culto de Domingo</h2>
@@ -161,20 +540,23 @@ function Hero() {
             <span><Sun /> 9h</span>
             <span><Moon /> 19h</span>
           </div>
-          <a href="#cultos">Ver agenda completa <ArrowDown /></a>
+          <a href="#cultos" data-press>Ver agenda completa <ArrowDown /></a>
         </aside>
       </div>
-      <a className="scroll-cue" href="#cultos" aria-label="Ir para a agenda"><span>Descubra</span><ArrowDown /></a>
+      <a className="scroll-cue" href="#cultos" aria-label="Ir para a agenda" data-press><span>Descubra</span><ArrowDown /></a>
     </section>
   )
 }
 
-function SectionHeading({ eyebrow, title, italic, children }) {
+function SectionHeading({ eyebrow, title, italic, children, id }) {
   return (
-    <div className="section-heading" data-reveal>
+    <div className="section-heading" data-reveal="up" data-parallax="14">
       <div>
         <p className="eyebrow"><span /> {eyebrow}</p>
-        <h2>{title}<br /><em>{italic}</em></h2>
+        <h2 id={id}>
+          <span className="heading-line"><span>{title}</span></span>{' '}
+          <span className="heading-line"><em>{italic}</em></span>
+        </h2>
       </div>
       <p>{children}</p>
     </div>
@@ -185,11 +567,11 @@ function Schedule() {
   return (
     <section className="section schedule" id="cultos" aria-labelledby="cultos-title">
       <div className="container">
-        <SectionHeading eyebrow="Encontre seu momento" title="Tem sempre um lugar" italic="esperando por você.">
+        <SectionHeading id="cultos-title" eyebrow="Encontre seu momento" title="Tem sempre um lugar" italic="esperando por você.">
           Escolha o melhor horário e venha como você está. Nossa equipe estará pronta para receber você e sua família.
         </SectionHeading>
         <div className="schedule-layout">
-          <article className="schedule-feature" data-reveal>
+          <article className="schedule-feature" data-reveal="left" data-tilt style={{ '--reveal-delay': '80ms' }}>
             <div className="schedule-feature-head"><span className="schedule-number">01</span><Sun /></div>
             <div>
               <p className="schedule-kicker">Todo domingo</p>
@@ -203,11 +585,11 @@ function Schedule() {
               Confirmar presença <ArrowRight />
             </ContactLink>
           </article>
-          <div className="schedule-list" data-reveal>
-            {meetings.map((meeting) => {
+          <div className="schedule-list">
+            {meetings.map((meeting, index) => {
               const Icon = iconMap[meeting.icon]
               return (
-                <article className="schedule-row" key={meeting.name}>
+                <article className="schedule-row" data-reveal="right" style={{ '--reveal-delay': `${120 + index * 70}ms` }} key={meeting.name}>
                   <div className="schedule-icon"><Icon /></div>
                   <div><span>{meeting.day}</span><h3>{meeting.name}</h3></div>
                   {meeting.action ? (
@@ -227,18 +609,18 @@ function About() {
   return (
     <section className="section about" id="sobre" aria-labelledby="sobre-title">
       <div className="container about-layout">
-        <div className="about-intro" data-reveal>
+        <div className="about-intro" data-reveal="left">
           <p className="eyebrow eyebrow-light"><span /> Nossa essência</p>
           <h2 id="sobre-title">O evangelho inteiro para a <em>pessoa inteira.</em></h2>
           <p>Somos uma comunidade cristã construída sobre graça, verdade e relacionamentos reais. Cremos em uma fé que alcança cada área da vida.</p>
           <blockquote>“A presença de Deus se revela na fé vivida com simplicidade.”</blockquote>
-          <a className="about-history-link" href="#nossa-historia">Conheça nossa história <ArrowDown /></a>
+          <a className="about-history-link" href="#nossa-historia" data-press>Conheça nossa história <ArrowDown /></a>
         </div>
-        <div className="pillars" data-reveal aria-label="Os quatro pilares da fé Quadrangular">
-          {pillars.map((pillar) => {
+        <div className="pillars" aria-label="Os quatro pilares da fé Quadrangular">
+          {pillars.map((pillar, index) => {
             const Icon = iconMap[pillar.icon]
             return (
-              <article className={`pillar pillar-${pillar.tone}`} key={pillar.number}>
+              <article className={`pillar pillar-${pillar.tone}`} data-reveal="scale" style={{ '--reveal-delay': `${80 + index * 70}ms` }} key={pillar.number}>
                 <div className="pillar-top"><span>{pillar.number}</span><Icon /></div>
                 <small className="pillar-doctrine">{pillar.doctrine}</small>
                 <h3>{pillar.title}</h3><p>{pillar.text}</p>
@@ -248,8 +630,8 @@ function About() {
         </div>
       </div>
 
-      <div className="container history-panel" id="nossa-historia" data-reveal>
-        <div className="history-timeline" aria-label="Marcos históricos">
+      <div className="container history-panel" id="nossa-historia" data-reveal="scale" style={{ '--reveal-delay': '120ms' }}>
+        <div className="history-timeline" aria-label="Marcos históricos" data-parallax="-24">
           <div><strong>1923</strong><span>Fundação em Los Angeles</span></div>
           <i aria-hidden="true" />
           <div><strong>1951</strong><span>Chegada ao Brasil</span></div>
@@ -285,18 +667,18 @@ function Ministries() {
   return (
     <section className="section ministries" id="ministerios" aria-labelledby="ministerios-title">
       <div className="container">
-        <SectionHeading eyebrow="Vida em comunidade" title="Há um espaço para" italic="cada fase da vida.">
+        <SectionHeading id="ministerios-title" eyebrow="Vida em comunidade" title="Há um espaço para" italic="cada fase da vida.">
           Conecte seus dons, construa amizades e descubra a alegria de servir junto.
         </SectionHeading>
         <div className="ministry-grid">
-          {ministries.map((ministry) => {
+          {ministries.map((ministry, index) => {
             const Icon = iconMap[ministry.icon]
             const classes = ['ministry-card', ministry.featured && 'ministry-feature', ministry.dark && 'ministry-dark'].filter(Boolean).join(' ')
             return (
-              <article className={classes} data-reveal key={ministry.title}>
+              <article className={classes} data-reveal={ministry.featured ? 'scale' : 'up'} style={{ '--reveal-delay': `${index * 70}ms` }} key={ministry.title}>
                 <span className="ministry-icon"><Icon /></span>
                 <div><small>{ministry.eyebrow}</small><h3>{ministry.title}</h3><p>{ministry.text}</p></div>
-                {ministry.featured && <a href="#contato" aria-label={`Saber mais sobre ${ministry.title}`}><ExternalLink /></a>}
+                {ministry.featured && <a href="#contato" aria-label={`Saber mais sobre ${ministry.title}`} data-press><ExternalLink /></a>}
               </article>
             )
           })}
@@ -309,8 +691,8 @@ function Ministries() {
 function VisitBanner() {
   return (
     <section className="visit-banner" aria-labelledby="visit-title">
-      <div className="visit-pattern" aria-hidden="true" />
-      <div className="container visit-inner" data-reveal>
+      <div className="visit-pattern" aria-hidden="true" data-parallax="36" />
+      <div className="container visit-inner" data-reveal="up" style={{ '--reveal-delay': '80ms' }}>
         <div>
           <p className="eyebrow eyebrow-light"><span /> Sua primeira visita</p>
           <h2 id="visit-title">Domingo pode ser o começo de uma nova história.</h2>
@@ -327,7 +709,7 @@ function Contact() {
   return (
     <section className="section contact" id="contato" aria-labelledby="contato-title">
       <div className="container contact-layout">
-        <div className="contact-copy" data-reveal>
+        <div className="contact-copy" data-reveal="left">
           <p className="eyebrow"><span /> Pode chegar</p>
           <h2 id="contato-title">Sua primeira vez pode ser <em>leve e simples.</em></h2>
           <p>Avise que você vem e nossa equipe ajuda com localização, horários e tudo o que precisar.</p>
@@ -337,7 +719,7 @@ function Contact() {
             <li><span>3</span><div><strong>Procure nossa equipe</strong><p>Vamos receber você e ajudar no que for preciso.</p></div></li>
           </ol>
         </div>
-        <aside className="contact-card" data-reveal>
+        <aside className="contact-card" data-reveal="right" data-tilt data-parallax="20" style={{ '--reveal-delay': '100ms' }}>
           <div className="contact-card-head"><span>Estamos em</span><MapPin /></div>
           <h3>{church.city}, {church.state}</h3>
           <p>{church.name} — {church.unit}. Peça a localização exata e veja a melhor rota para chegar.</p>
@@ -359,16 +741,16 @@ function Footer() {
     <footer className="footer">
       <div className="container footer-main">
         <div className="footer-brand"><Brand light /><p>Os quatro pilares da fé em um só lugar. Uma comunidade para viver a fé, construir amizades e encontrar propósito.</p></div>
-        <div className="footer-links"><h3>Navegue</h3><a href="#cultos">Encontros</a><a href="#sobre">Quem somos</a><a href="#ministerios">Ministérios</a><a href="#contato">Contato</a></div>
-        <div className="footer-links"><h3>Domingo</h3><p>Escola Dominical — 8h30</p><p>Celebração — 9h e 19h</p><a href="#cultos">Ver agenda completa</a></div>
-        <div className="footer-social"><h3>Acompanhe</h3><div><a href="#" aria-label="Instagram">Ig</a><a href="#" aria-label="Facebook">Fb</a><a href="#" aria-label="YouTube">Yt</a></div></div>
+        <div className="footer-links"><h3>Navegue</h3><a href="#cultos" data-press>Encontros</a><a href="#sobre" data-press>Quem somos</a><a href="#ministerios" data-press>Ministérios</a><a href="#contato" data-press>Contato</a></div>
+        <div className="footer-links"><h3>Domingo</h3><p>Escola Dominical — 8h30</p><p>Celebração — 9h e 19h</p><a href="#cultos" data-press>Ver agenda completa</a></div>
+        <div className="footer-social"><h3>Acompanhe</h3><div><a href="#" aria-label="Instagram" data-press>Ig</a><a href="#" aria-label="Facebook" data-press>Fb</a><a href="#" aria-label="YouTube" data-press>Yt</a></div></div>
       </div>
       <div className="container footer-bottom"><p>© {new Date().getFullYear()} {church.name} — {church.city}. Todos os direitos reservados.</p><p>Planejamento: <strong>@emanuel.macedo</strong></p><p>Produto adaptável para múltiplos contextos.</p></div>
     </footer>
   )
 }
 
-function FaqWidget() {
+function FaqWidget({ reducedMotion }) {
   const initialMessage = { type: 'bot', text: 'Olá! Que bom ter você por aqui. Como posso ajudar?', options: ['horarios', 'primeiraVisita', 'endereco', 'pastor', 'batismo', 'ceia'] }
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState([initialMessage])
@@ -381,8 +763,8 @@ function FaqWidget() {
 
   useEffect(() => {
     if (open) closeRef.current?.focus()
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' })
-  }, [open, messages, typing])
+    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: reducedMotion ? 'auto' : 'smooth' })
+  }, [open, messages, typing, reducedMotion])
 
   useEffect(() => {
     const onPointerDown = (event) => {
@@ -399,9 +781,10 @@ function FaqWidget() {
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
-      window.clearTimeout(timeoutRef.current)
     }
   }, [open])
+
+  useEffect(() => () => window.clearTimeout(timeoutRef.current), [])
 
   const selectTopic = (key) => {
     const topic = faqTopics[key]
@@ -436,6 +819,7 @@ function FaqWidget() {
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         ref={toggleRef}
+        data-press
       >
         <span className="chatbot-label">Posso ajudar?</span>
         <span className="chatbot-icon"><MessageCircle /><span className="notif-badge" /></span>
@@ -444,15 +828,15 @@ function FaqWidget() {
         <header className="chatbot-header">
           <span className="bot-avatar"><Heart /></span>
           <div><strong>Como podemos ajudar?</strong><small>Respostas rápidas</small></div>
-          <button className="close-chat" type="button" aria-label="Fechar" onClick={() => setOpen(false)} ref={closeRef}><X /></button>
+          <button className="close-chat" type="button" aria-label="Fechar" onClick={() => setOpen(false)} ref={closeRef} data-press><X /></button>
         </header>
         <div className="chatbot-body" ref={bodyRef} aria-live="polite">
           {messages.map((message, index) => (
-            <div className={`chat-message ${message.type}`} key={`${message.type}-${index}`}>
+            <div className={`chat-message ${message.type}`} style={{ '--message-index': index }} key={`${message.type}-${index}`}>
               <p>{message.text}</p>
               {message.options && index === messages.length - 1 && (
                 <div className="chat-options">
-                  {message.options.map((key) => <button type="button" onClick={() => selectTopic(key)} key={key}>{faqTopics[key].label}</button>)}
+                  {message.options.map((key) => <button type="button" onClick={() => selectTopic(key)} data-press key={key}>{faqTopics[key].label}</button>)}
                 </div>
               )}
             </div>
@@ -466,6 +850,8 @@ function FaqWidget() {
 }
 
 function ReactApp() {
+  const reducedMotion = useMotionSystem()
+
   useEffect(() => {
     if (!window.location.hash) return undefined
     const frame = window.requestAnimationFrame(() => {
@@ -476,24 +862,37 @@ function ReactApp() {
 
   useEffect(() => {
     const items = [...document.querySelectorAll('[data-reveal]')]
-    if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      items.forEach((item) => item.classList.add('is-visible'))
+    if (!('IntersectionObserver' in window) || reducedMotion) {
+      items.forEach((item) => item.classList.add('is-visible', 'is-motion-settled'))
       return undefined
     }
+    const settleTimers = new Set()
     const observer = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
           entry.target.classList.add('is-visible')
+          const rawDelay = getComputedStyle(entry.target).getPropertyValue('--reveal-delay').trim()
+          const parsedDelay = Number.parseFloat(rawDelay) || 0
+          const delay = rawDelay.endsWith('s') && !rawDelay.endsWith('ms') ? parsedDelay * 1000 : parsedDelay
+          const timer = window.setTimeout(() => {
+            entry.target.classList.add('is-motion-settled')
+            settleTimers.delete(timer)
+          }, delay + 1050)
+          settleTimers.add(timer)
           observer.unobserve(entry.target)
         }
       })
     }, { threshold: 0.12, rootMargin: '0px 0px -48px' })
     items.forEach((item) => observer.observe(item))
-    return () => observer.disconnect()
-  }, [])
+    return () => {
+      observer.disconnect()
+      settleTimers.forEach((timer) => window.clearTimeout(timer))
+    }
+  }, [reducedMotion])
 
   return (
     <>
+      <div className="motion-flare" aria-hidden="true" />
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
       <Header />
       <main id="conteudo">
@@ -505,7 +904,7 @@ function ReactApp() {
         <Contact />
       </main>
       <Footer />
-      <FaqWidget />
+      <FaqWidget reducedMotion={reducedMotion} />
       <ContactLink className="mobile-visit-bar" message="Olá! Quero planejar minha primeira visita à igreja."><MessageCircle /> Planejar minha visita</ContactLink>
     </>
   )
